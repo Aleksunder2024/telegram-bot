@@ -1,6 +1,6 @@
 import os
-from telegram import Update, Bot
-from telegram.ext import Updater, CommandHandler, CallbackContext
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # Получаем токен из переменных окружения
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -8,22 +8,19 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_TOKEN не задан. Проверь переменные окружения в Railway!")
 
-# Создаём объект бота
-bot = Bot(token=TELEGRAM_TOKEN)
-updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
-dispatcher = updater.dispatcher
-
-# Команда /start
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text(
+# Обработчик команды /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
         "Привет! Я бот aleksandraibot33 🚀\n"
         "Я могу присылать тебе челленджи и интересные статьи!"
     )
 
+# Создаем приложение бота
+app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
 # Добавляем обработчик команды /start
-dispatcher.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("start", start))
 
 # Запускаем бота
 print("Бот запущен...")
-updater.start_polling()
-updater.idle()
+app.run_polling()
