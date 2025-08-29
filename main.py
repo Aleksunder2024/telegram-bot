@@ -22,7 +22,7 @@ if os.path.exists(DATA_FILE):
 else:
     user_data = {}
 
-# ====== Список статей ======
+# ====== Пример статей и категорий ======
 articles = {
     "спорт": ["https://habr.com/ru/articles/123456/"],
     "книги": ["https://example.com/fantasy-world"],
@@ -34,17 +34,31 @@ def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump({"user_data": user_data, "articles": articles}, f, ensure_ascii=False, indent=2)
 
-# ====== Генерация задания через Hugging Face ======
+# ====== Генерация задания ======
 def generate_challenge(category: str) -> str:
-    url = "https://api-inference.huggingface.co/models/gpt2"
+    # Попытка через HF API
+    url = "https://api-inference.huggingface.co/models/EleutherAI/gpt-neo-1.3B"
     headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-    prompt = f"Придумай короткое и мотивирующее ежедневное задание для категории '{category}':"
-    response = requests.post(url, headers=headers, json={"inputs": prompt})
+    prompt = f"Придумай короткое мотивирующее ежедневное задание для категории '{category}':"
     try:
-        text = response.json()[0]['generated_text']
-        return text.strip()
+        response = requests.post(url, headers=headers, json={"inputs": prompt}, timeout=10)
+        if response.status_code == 200:
+            text = response.json()[0]['generated_text']
+            if text.strip():
+                return text.strip()
+        # Если ошибка API или пустой текст
+        return None
     except Exception:
-        return f"Задание для '{category}' не получилось сгенерировать."
+        return None
+
+# ====== Резервный генератор (случайные задания) ======
+def fallback_challenge(category: str) -> str:
+    sample_tasks = {
+        "спорт": ["10 приседаний", "Пройти 10000 шагов", "5 минут планка"],
+        "книги": ["Прочитать 5 страниц", "Выбрать новую книгу для чтения"],
+        "крипта": ["Прочитать статью про биткоин", "Посмотреть видео о DeFi"]
+    }
+    return random.choice(sample_tasks.get(category, ["Сделай что-то полезное!"]))
 
 # ====== Команды ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,7 +129,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     category = query.data
-    challenge = generate_challenge(category)
+    challenge = generate_challenge(category) or fallback_challenge(category)
     await query.edit_message_text(f"Челлендж ({category}): {challenge}")
 
 # ====== Обработка текстовых сообщений ======
@@ -124,7 +138,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
     categories = list(user_data[chat_id]["completed"].keys())
     if text in categories:
-        challenge = generate_challenge(text)
+        challenge = generate_challenge(text) or fallback_challenge(text)
         await update.message.reply_text(f"Челлендж ({text}): {challenge}")
     else:
         if categories:
