@@ -22,7 +22,7 @@ if os.path.exists(DATA_FILE):
 else:
     user_data = {}
 
-# ====== Пример статей и категорий ======
+# ====== Пример статей ======
 articles = {
     "спорт": ["https://habr.com/ru/articles/123456/"],
     "книги": ["https://example.com/fantasy-world"],
@@ -34,31 +34,58 @@ def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump({"user_data": user_data, "articles": articles}, f, ensure_ascii=False, indent=2)
 
-# ====== Генерация задания ======
+# ====== Динамические шаблоны для fallback ======
+templates = {
+    "спорт": ["Сделай {n} приседаний", "Пройди {n} шагов", "Планка {n} секунд"],
+    "книги": ["Прочитай {n} страниц", "Выбери новую книгу жанра {genre}"],
+    "крипта": ["Прочитай статью про {coin}", "Посмотри видео о {topic}"]
+}
+
+def fallback_challenge(category: str):
+    if category not in templates:
+        return "Сделай что-то полезное!"
+    template = random.choice(templates[category])
+    n = random.randint(5, 20)
+    genre = random.choice(["фэнтези", "научную фантастику", "классическую литературу"])
+    coin = random.choice(["BTC", "ETH", "ADA"])
+    topic = random.choice(["DeFi", "NFT", "стейкинг"])
+    return template.format(n=n, genre=genre, coin=coin, topic=topic)
+
+# ====== Генерация задания через HF API ======
 def generate_challenge(category: str) -> str:
-    # Попытка через HF API
     url = "https://api-inference.huggingface.co/models/EleutherAI/gpt-neo-1.3B"
     headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
     prompt = f"Придумай короткое мотивирующее ежедневное задание для категории '{category}':"
     try:
         response = requests.post(url, headers=headers, json={"inputs": prompt}, timeout=10)
         if response.status_code == 200:
-            text = response.json()[0]['generated_text']
-            if text.strip():
-                return text.strip()
-        # Если ошибка API или пустой текст
-        return None
+            text = response.json()[0].get('generated_text', '').strip()
+            if text:
+                return text
+        # Если API не ответил корректно
+        return fallback_challenge(category)
     except Exception:
-        return None
+        return fallback_challenge(category)
 
-# ====== Резервный генератор (случайные задания) ======
-def fallback_challenge(category: str) -> str:
-    sample_tasks = {
-        "спорт": ["10 приседаний", "Пройти 10000 шагов", "5 минут планка"],
-        "книги": ["Прочитать 5 страниц", "Выбрать новую книгу для чтения"],
-        "крипта": ["Прочитать статью про биткоин", "Посмотреть видео о DeFi"]
-    }
-    return random.choice(sample_tasks.get(category, ["Сделай что-то полезное!"]))
+# ====== Ассистент для произвольных вопросов ======
+def generate_assistant_hint(user_text: str) -> str:
+    url = "https://api-inference.huggingface.co/models/EleutherAI/gpt-neo-1.3B"
+    headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
+    prompt = (
+        f"Ты ассистент для Telegram-бота, который генерирует челленджи. "
+        f"Пользователь пишет: '{user_text}'. "
+        f"Объясни, что можно сделать, или как пользоваться ботом. "
+        f"Дай понятную короткую подсказку."
+    )
+    try:
+        response = requests.post(url, headers=headers, json={"inputs": prompt}, timeout=10)
+        if response.status_code == 200:
+            text = response.json()[0].get("generated_text", "").strip()
+            if text:
+                return text
+        return "Прости, я пока не могу подсказать. Попробуй уточнить вопрос или использовать команды /help."
+    except Exception:
+        return "Прости, я пока не могу подсказать. Попробуй уточнить вопрос или использовать команды /help."
 
 # ====== Команды ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,7 +141,6 @@ async def list_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Существующие категории:\n" + "\n".join(categories))
 
-# ====== Выбор категории через кнопки ======
 async def choose_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.message.chat_id)
     categories = list(user_data[chat_id]["completed"].keys())
@@ -129,24 +155,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     category = query.data
-    challenge = generate_challenge(category) or fallback_challenge(category)
+    challenge = generate_challenge(category)
     await query.edit_message_text(f"Челлендж ({category}): {challenge}")
 
-# ====== Обработка текстовых сообщений ======
+# ====== Обработка сообщений ======
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.message.chat_id)
     text = update.message.text.lower()
     categories = list(user_data[chat_id]["completed"].keys())
+
+    # Если совпадает с категорией — выдаём челлендж
     if text in categories:
-        challenge = generate_challenge(text) or fallback_challenge(text)
+        challenge = generate_challenge(text)
         await update.message.reply_text(f"Челлендж ({text}): {challenge}")
     else:
-        if categories:
-            await update.message.reply_text(
-                "Не понято. Выберите категорию из существующих:\n" + "\n".join(categories)
-            )
-        else:
-            await update.message.reply_text("Категорий пока нет. Добавьте через /add_category")
+        # Используем ассистента для подсказки
+        hint = generate_assistant_hint(text)
+        await update.message.reply_text(hint)
 
 # ====== Создание бота ======
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
