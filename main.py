@@ -1,23 +1,21 @@
 import os
-import asyncio
 import random
 import json
+import requests
 from datetime import datetime, time, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# ====== Hugging Face ======
-from transformers import pipeline
-
-# Создаем генератор текста
-generator = pipeline("text-generation", model="gpt2")  # бесплатная базовая модель
-
 # ====== Telegram ======
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+HF_API_TOKEN = os.environ.get("HF_API_TOKEN")  # Hugging Face API token
 DATA_FILE = "user_data.json"
 
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_TOKEN не задан!")
+
+if not HF_API_TOKEN:
+    raise ValueError("HF_API_TOKEN не задан!")
 
 # ====== Загрузка данных ======
 if os.path.exists(DATA_FILE):
@@ -38,14 +36,17 @@ def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump({"user_data": user_data, "articles": articles}, f, ensure_ascii=False, indent=2)
 
-# ====== Генерация задания ======
-async def generate_challenge(category: str) -> str:
-    prompt = f"Придумай короткое и мотивирующее ежедневное задание для категории '{category}'"
+# ====== Генерация задания через Hugging Face Inference API ======
+def generate_challenge(category: str) -> str:
+    url = "https://api-inference.huggingface.co/models/gpt2"
+    headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
+    prompt = f"Придумай короткое и мотивирующее ежедневное задание для категории '{category}':"
+    response = requests.post(url, headers=headers, json={"inputs": prompt})
     try:
-        challenge = generator(prompt, max_length=50, do_sample=True)[0]['generated_text']
-        return challenge.strip()
-    except Exception as e:
-        return f"Ошибка при генерации: {e}"
+        text = response.json()[0]['generated_text']
+        return text.strip()
+    except Exception:
+        return f"Задание для '{category}' не получилось сгенерировать."
 
 # ====== Команды ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -54,8 +55,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data[chat_id] = {"completed": {}, "notify_hour": 10, "daily_count": 2}
         save_data()
     await update.message.reply_text(
-        "Привет! Я бот, который генерирует ежедневные челленджи 🎯\n"
-        "Добавляй категории /add_category и задания через генерацию или вручную."
+        "Привет! Я бот, который генерирует ежедневные челленджи 🎯"
     )
 
 async def add_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -79,39 +79,6 @@ async def add_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_data()
     await update.message.reply_text(f"Задание добавлено в категорию '{category}'!")
 
-async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.message.chat_id)
-    if len(context.args) != 1:
-        await update.message.reply_text("Используй /time HH")
-        return
-    try:
-        hour = int(context.args[0])
-        if 0 <= hour <= 23:
-            user_data[chat_id]["notify_hour"] = hour
-            save_data()
-            await update.message.reply_text(f"Время уведомлений установлено на {hour}:00")
-        else:
-            await update.message.reply_text("Часы должны быть от 0 до 23")
-    except ValueError:
-        await update.message.reply_text("Введите число от 0 до 23")
-
-async def set_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.message.chat_id)
-    if len(context.args) != 1:
-        await update.message.reply_text("Используй /count число_заданий")
-        return
-    try:
-        count = int(context.args[0])
-        if 1 <= count <= 5:
-            user_data[chat_id]["daily_count"] = count
-            save_data()
-            await update.message.reply_text(f"Количество ежедневных заданий: {count}")
-        else:
-            await update.message.reply_text("Можно выбрать от 1 до 5 заданий в день")
-    except ValueError:
-        await update.message.reply_text("Некорректное число")
-
-# ====== Обработчик сообщений ======
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.message.chat_id)
     text = update.message.text.lower()
@@ -119,7 +86,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data[chat_id] = {"completed": {}, "notify_hour": 10, "daily_count": 2}
         save_data()
     if text in user_data[chat_id]["completed"]:
-        challenge = await generate_challenge(text)
+        challenge = generate_challenge(text)
         user_data[chat_id]["completed"][text].append(challenge)
         save_data()
         article = random.choice(articles.get(text, [])) if articles.get(text) else "Нет статьи"
@@ -127,45 +94,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Выберите существующую категорию или добавьте через /add_category")
 
-# ====== Ежедневные уведомления ======
-async def daily_notifications(app):
-    await asyncio.sleep(5)
-    while True:
-        now = datetime.now()
-        for chat_id, data in user_data.items():
-            target_hour = data.get("notify_hour", 10)
-            next_run = datetime.combine(now.date(), time(target_hour, 0))
-            if now.hour >= target_hour:
-                next_run += timedelta(days=1)
-            wait_seconds = (next_run - now).total_seconds()
-            await asyncio.sleep(wait_seconds)
-
-            count = data.get("daily_count", 2)
-            for _ in range(count):
-                if not data["completed"]:
-                    continue
-                category = random.choice(list(data["completed"].keys()))
-                challenge = await generate_challenge(category)
-                data["completed"][category].append(challenge)
-                save_data()
-                article = random.choice(articles.get(category, [])) if articles.get(category) else "Нет статьи"
-                await app.bot.send_message(chat_id=int(chat_id),
-                                           text=f"Ежедневный челлендж ({category}): {challenge}\nСтатья: {article}")
-
 # ====== Создаем бота ======
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("add_category", add_category))
 app.add_handler(CommandHandler("add_challenge", add_challenge))
-app.add_handler(CommandHandler("time", set_time))
-app.add_handler(CommandHandler("count", set_count))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 # ====== Запуск ======
-async def main():
-    asyncio.create_task(daily_notifications(app))
+if __name__ == "__main__":
     print("Бот запущен...")
-    await app.run_polling()
-
-import asyncio
-asyncio.run(main())
+    app.run_polling()
