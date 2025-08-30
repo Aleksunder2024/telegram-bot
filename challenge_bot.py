@@ -29,15 +29,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация из переменных окружения для безопасности
-TELEGRAM_API_TOKEN = os.getenv("TELEGRAM_API_TOKEN")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# Жестко закодированные токены (временное решение)
+TELEGRAM_API_TOKEN = "8416538451:AAEjOIDh_XskQ39xvvHkN7IGIqLmVijBAKI"
+GOOGLE_API_KEY = "AIzaSyBpaN1rt50z-_SJGi1ZP8IBl-jHTOTf9Rg"
 
-# Проверка наличия необходимых токенов
-if not TELEGRAM_API_TOKEN:
-    raise ValueError("Необходимо установить переменную окружения TELEGRAM_API_TOKEN")
-if not GOOGLE_API_KEY:
-    raise ValueError("Необходимо установить переменную окружения GOOGLE_API_KEY")
+# Дополнительно используем переменные окружения, если они доступны
+telegram_env = os.getenv("TELEGRAM_API_TOKEN")
+google_env = os.getenv("GOOGLE_API_KEY")
+if telegram_env:
+    TELEGRAM_API_TOKEN = telegram_env
+if google_env:
+    GOOGLE_API_KEY = google_env
+
+print(f"Используется токен Telegram длиной: {len(TELEGRAM_API_TOKEN)} символов")
+print(f"Используется токен Google длиной: {len(GOOGLE_API_KEY)} символов")
 
 # Инициализация Google Gemini API
 genai.configure(api_key=GOOGLE_API_KEY)
